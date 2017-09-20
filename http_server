@@ -1,0 +1,93 @@
+#!/usr/bin/env python
+
+import BaseHTTPServer
+import SocketServer
+import json
+import urlparse
+from collections import defaultdict
+import re
+import sys
+
+requestHandlers = defaultdict(dict)
+
+employees = {}
+
+class Employee(object):
+    def __init__(self, name, phone, age):
+        self.name = name
+        self.phone = phone 
+        self.age = age
+    
+
+def route(url, reqType):
+    def decorator(func):
+        requestHandlers[reqType][url] = func
+        return func
+    return decorator
+
+
+@route('/api/v1/employees', 'put')
+def add_employee(employee):
+    emp = Employee(employee['name'], employee['phone'], employee['age'])
+    employees[employee['phone']] = emp.__dict__
+
+@route('/api/v1/employees', 'get')
+def get_employee(path):
+    tokens = path.split('/')
+    result = employees
+    for token in tokens:
+        if token:
+            result = result[token]
+    return json.dumps(result, indent = 2)
+
+PORT = 8009
+class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+    def do_GET(self):
+        url = urlparse.urlparse(self.path)
+        self.send_response(200)
+        self.send_header('Content-type','application/json')
+        self.end_headers()
+        (func, path) = self.getGetRequestHandler(url.path)
+        data = func(path)
+        self.wfile.write(bytes(data))
+        return
+
+    def do_PUT(self):
+        url = urlparse.urlparse(self.path)
+        length = int(self.headers['Content-Length'])
+        content = self.rfile.read(length)
+        data = json.loads(content)
+        func = self.getPutRequestHandler(url.path)
+        func(data)
+        self.send_response(200)
+        self.end_headers()
+
+
+    def getPutRequestHandler(self, path):
+        return requestHandlers['put'][path]
+
+    def getGetRequestHandler(self, path):
+        for resource in requestHandlers['get'].keys():
+            pattern = "(%s)(.*)" % (resource)
+            m = re.match(pattern, path)
+            if m:
+                return (requestHandlers['get'][m.group(1)], m.group(2))
+        
+Handler = RequestHandler
+
+httpd = SocketServer.TCPServer(("localhost", PORT), Handler)
+
+print "serving at port", PORT
+f = open("data.txt", "r")
+employees = json.loads(f.read())
+f.close()
+try:
+    httpd.serve_forever()
+except KeyboardInterrupt:
+    fh = open("data.txt", "w")
+    json_string = json.dumps(employees)
+    fh.write(json_string)
+    fh.close()
+    print "Bye\n"
+    sys.exit()
+    
